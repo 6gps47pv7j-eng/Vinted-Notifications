@@ -1,4 +1,5 @@
 import db
+import isbn_watch
 import requests
 from pyVintedVN import Vinted, requester
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
@@ -338,16 +339,36 @@ def clear_item_queue(items_queue, new_items_queue):
                 db.update_last_timestamp(query_id, item.raw_timestamp)
                 pass
             else:
+                # --- Vérification ISBN (seulement pour les recherches créées via /add_isbn) ---
+                status, info = isbn_watch.evaluate_item(item, query_id)
+                if status in ("other", "too_expensive"):
+                    # Autre édition (ou trop cher) : on ignore l'annonce
+                    logger.info(f"ISBN: annonce {item.id} ignorée ({status}: {info})")
+                    db.update_last_timestamp(query_id, item.raw_timestamp)
+                    continue
+                if status == "match":
+                    prefix = f"✅ <b>ÉDITION EXACTE</b> — ISBN {info[0]}\n"
+                elif status == "no_isbn":
+                    prefix = "⚠️ <b>ISBN non renseigné</b> — à vérifier\n"
+                else:
+                    prefix = ""
+
                 # We create the message
                 message_template = db.get_parameter("message_template")
-                content = message_template.format(
+                content = prefix + message_template.format(
                     title=item.title,
                     price=str(item.price) + " " + item.currency,
                     brand=item.brand_title,
                     image=None if item.photo is None else item.photo,
                 )
                 # add the item to the queue
-                new_items_queue.put((content, item.url, "Open Vinted", None, None))
+                if status == "match":
+                    # Bouton d'achat direct pour les éditions exactes
+                    new_items_queue.put(
+                        (content, item.url, "Open Vinted", item.buy_url, "🛒 Acheter")
+                    )
+                else:
+                    new_items_queue.put((content, item.url, "Open Vinted", None, None))
                 # new_items_queue.put((content, item.url, "Open Vinted", item.buy_url, "Open buy page"))
                 # Add the item to the db
                 db.add_item_to_db(
