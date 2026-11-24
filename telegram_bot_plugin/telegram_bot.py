@@ -3,6 +3,7 @@ from telegram.ext import ContextTypes
 from telegram.error import RetryAfter
 import db
 import core
+import isbn_watch
 import asyncio
 from logger import get_logger
 
@@ -54,6 +55,10 @@ class LeRobot:
             self.app.add_handler(CommandHandler("add_country", self.add_country))
             self.app.add_handler(CommandHandler("remove_country", self.remove_country))
             self.app.add_handler(CommandHandler("allowlist", self.allowlist))
+            # ISBN handlers
+            self.app.add_handler(CommandHandler("add_isbn", self.add_isbn))
+            self.app.add_handler(CommandHandler("remove_isbn", self.remove_isbn))
+            self.app.add_handler(CommandHandler("isbns", self.isbns))
 
             # TODO : Help command
 
@@ -248,6 +253,45 @@ class LeRobot:
             except Exception as e2:
                 logger.error(f"Error sending error message: {str(e2)}")
 
+    ### ISBN ###
+
+    # /add_isbn 9782505012345 8 [titre optionnel]
+    async def add_isbn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            args = context.args
+            if not args or len(args) < 2:
+                await update.message.reply_text(
+                    "Utilisation : /add_isbn ISBN PRIX_MAX [titre]\n"
+                    "Ex. : /add_isbn 9782505012345 8\n"
+                    "Ex. : /add_isbn 9782505012345 8 Homunculus tome 3"
+                )
+                return
+            title = " ".join(args[2:]) or None
+            await update.message.reply_text("🔎 Recherche du livre…")
+            message, _ = await asyncio.to_thread(isbn_watch.add_watch, args[0], args[1], title)
+            await update.message.reply_text(message)
+        except Exception as e:
+            logger.error(f"Error adding ISBN: {str(e)}", exc_info=True)
+            await update.message.reply_text("Erreur lors de l'ajout de l'ISBN.")
+
+    async def remove_isbn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            if not context.args:
+                await update.message.reply_text("Utilisation : /remove_isbn ISBN")
+                return
+            message, _ = isbn_watch.remove_watch(context.args[0])
+            await update.message.reply_text(message)
+        except Exception as e:
+            logger.error(f"Error removing ISBN: {str(e)}", exc_info=True)
+            await update.message.reply_text("Erreur lors de la suppression de l'ISBN.")
+
+    async def isbns(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            await update.message.reply_text("ISBN suivis :\n" + isbn_watch.format_watch_list())
+        except Exception as e:
+            logger.error(f"Error listing ISBNs: {str(e)}", exc_info=True)
+            await update.message.reply_text("Erreur lors de l'affichage des ISBN.")
+
     ### TELEGRAM SPECIFIC FUNCTIONS ###
 
     async def send_new_post(self, content, url, text, buy_url=None, buy_text=None):
@@ -314,6 +358,9 @@ class LeRobot:
                     ("add_country", "Add a country to the allowlist"),
                     ("remove_country", "Remove a country from the allowlist"),
                     ("allowlist", "List all countries in the allowlist"),
+                    ("add_isbn", "Suivre un ISBN : /add_isbn ISBN PRIX [titre]"),
+                    ("remove_isbn", "Ne plus suivre un ISBN"),
+                    ("isbns", "Liste des ISBN suivis"),
                 ]
             )
             logger.info("Bot commands set successfully")
